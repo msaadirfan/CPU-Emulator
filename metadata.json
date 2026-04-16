@@ -1,0 +1,6 @@
+{
+  "name": "CPU Emulator & Debugger",
+  "description": "A custom 32-bit CPU emulator with instruction tracing, built with MASM and visualized through a terminal-aesthetic GUI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

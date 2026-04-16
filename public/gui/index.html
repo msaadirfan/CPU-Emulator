@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPU Emulator — Custom ISA Processor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0a0c0f;
+    --bg2:       #0f1318;
+    --bg3:       #141a22;
+    --bg4:       #1a2230;
+    --border:    #1e2d40;
+    --border2:   #2a3f58;
+    --green:     #00e676;
+    --green-dim: #00c853;
+    --amber:     #ffb300;
+    --cyan:      #00bcd4;
+    --red:       #ff5252;
+    --blue:      #448aff;
+    --purple:    #ce93d8;
+    --muted:     #546e7a;
+    --text:      #cfd8dc;
+    --text2:     #90a4ae;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-head: 'Syne', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.05) 2px,
+      rgba(0,0,0,0.05) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  .header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .header-left { display: flex; align-items: center; gap: 14px; }
+
+  .cpu-logo {
+    width: 36px; height: 36px;
+    border: 1.5px solid var(--green);
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 2px;
+    padding: 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .cpu-logo span { background: var(--green); border-radius: 1px; animation: blink-cell 2.8s infinite; }
+  .cpu-logo span:nth-child(2) { animation-delay: 0.3s; }
+  .cpu-logo span:nth-child(4) { animation-delay: 0.6s; }
+  .cpu-logo span:nth-child(5) { background: var(--bg); }
+  .cpu-logo span:nth-child(6) { animation-delay: 0.9s; }
+  .cpu-logo span:nth-child(8) { animation-delay: 1.2s; }
+
+  @keyframes blink-cell { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+  .header-title { font-family: var(--font-head); font-size: 17px; font-weight: 800; color: #fff; letter-spacing: -0.3px; }
+  .header-sub { font-size: 10px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 1px; }
+
+  .status-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .status-pill { font-size: 10px; padding: 3px 8px; border-radius: 2px; border: 1px solid var(--border2); color: var(--text2); letter-spacing: 0.05em; font-family: var(--font-mono); }
+  .status-pill.running { border-color: var(--green); color: var(--green); }
+  .status-pill.halted  { border-color: var(--red);   color: var(--red); }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 272px 1fr 290px;
+    height: calc(100vh - 65px);
+  }
+
+  .panel { background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .panel:last-child { border-right: none; }
+
+  .panel-header { background: var(--bg3); border-bottom: 1px solid var(--border); padding: 8px 14px; display: flex; align-items: center; gap: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text2); font-weight: 600; flex-shrink: 0; }
+  .panel-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+  .panel-dot.amber { background: var(--amber); }
+  .panel-dot.cyan  { background: var(--cyan); }
+  .panel-dot.purple{ background: var(--purple); }
+
+  .panel-body { flex: 1; overflow-y: auto; padding: 10px 0; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+
+  .reg-row { display: flex; align-items: center; padding: 5px 14px; gap: 8px; border-bottom: 1px solid transparent; transition: background 0.15s; }
+  .reg-row:hover { background: var(--bg3); }
+  .reg-row.changed { background: rgba(0,230,118,0.07); border-bottom-color: rgba(0,230,118,0.15); }
+  .reg-name { font-size: 11px; color: var(--cyan); width: 26px; font-weight: 600; flex-shrink: 0; }
+  .reg-bar-wrap { flex: 1; height: 4px; background: var(--bg4); border-radius: 2px; overflow: hidden; }
+  .reg-bar { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.35s cubic-bezier(0.4,0,0.2,1); min-width: 2px; }
+  .reg-val { font-size: 11px; color: var(--green); width: 86px; text-align: right; font-weight: 600; letter-spacing: 0.04em; }
+
+  .pc-row { margin: 6px 14px; padding: 6px 10px; background: var(--bg4); border: 1px solid var(--border2); border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+  .pc-row .lbl { color: var(--text2); }
+  .pc-row .val { color: var(--amber); font-weight: 700; }
+
+  .flags-row { margin: 4px 14px 10px; display: flex; gap: 8px; }
+  .flag-pill { flex: 1; text-align: center; padding: 4px 0; border-radius: 3px; font-size: 11px; font-weight: 700; border: 1px solid var(--border2); color: var(--muted); transition: all 0.2s; }
+  .flag-pill.active     { border-color: var(--red);  color: var(--red);  background: rgba(255,82,82,0.08); }
+  .flag-pill.active.zf  { border-color: var(--blue); color: var(--blue); background: rgba(68,138,255,0.08); }
+  .flag-pill.active.cf  { border-color: var(--amber);color: var(--amber);background: rgba(255,179,0,0.08); }
+
+  .cycles-row { margin: 0 14px 6px; padding: 5px 10px; background: var(--bg3); border-radius: 3px; display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); }
+  .cycles-row .val { color: var(--purple); font-weight: 700; }
+
+  .section-label { padding: 6px 14px 4px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 600; }
+
+  .mem-grid { display: grid; grid-template-columns: repeat(8,1fr); gap: 2px; padding: 6px 10px 10px; }
+  .mem-cell { padding: 4px 2px; text-align: center; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 2px; background: var(--bg3); transition: background 0.2s, color 0.2s; }
+  .mem-cell.nonzero { background: rgba(0,188,212,0.08); color: var(--cyan); border-color: rgba(0,188,212,0.25); }
+
+  .center-panel { grid-column: 2; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+
+  .fde-strip { background: var(--bg3); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; gap: 10px; flex-shrink: 0; align-items: stretch; }
+  .fde-box { flex: 1; border: 1px solid var(--border2); border-radius: 5px; padding: 8px 12px; transition: border-color 0.25s, background 0.25s; }
+  .fde-box.active          { border-color: var(--green);  background: rgba(0,230,118,0.05); }
+  .fde-box.active.decode   { border-color: var(--cyan);   background: rgba(0,188,212,0.05); }
+  .fde-box.active.execute  { border-color: var(--amber);  background: rgba(255,179,0,0.05); }
+  .fde-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600; margin-bottom: 4px; }
+  .fde-box:nth-child(1) .fde-label { color: var(--green); }
+  .fde-box:nth-child(3) .fde-label { color: var(--cyan); }
+  .fde-box:nth-child(5) .fde-label { color: var(--amber); }
+  .fde-val { font-size: 14px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fde-sub { font-size: 10px; color: var(--text2); margin-top: 2px; }
+  .fde-arrow { display: flex; align-items: center; color: var(--border2); font-size: 18px; padding-bottom: 2px; }
+
+  .controls-row { background: var(--bg3); border-bottom: 1px solid var(--border); padding: 8px 16px; display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; align-items: center; }
+  .btn { padding: 6px 14px; border: 1px solid var(--border2); border-radius: 3px; background: transparent; color: var(--text); font-family: var(--font-mono); font-size: 11px; cursor: pointer; transition: all 0.15s; font-weight: 600; }
+  .btn:hover { background: var(--bg4); border-color: var(--text2); color: #fff; }
+  .btn.primary { border-color: var(--green); color: var(--green); }
+  .btn.primary:hover { background: rgba(0,230,118,0.1); }
+  .btn.danger  { border-color: var(--red);   color: var(--red); }
+  .btn.danger:hover  { background: rgba(255,82,82,0.1); }
+  .speed-row { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 10px; color: var(--text2); }
+  .speed-row input[type=range] { width: 80px; accent-color: var(--green); }
+
+  .prog-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .prog-tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--bg3); flex-shrink: 0; }
+  .prog-tab { padding: 7px 14px; font-size: 11px; color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; font-weight: 600; }
+  .prog-tab:hover { color: var(--text); }
+  .prog-tab.active    { color: var(--green); border-bottom-color: var(--green); }
+  .prog-tab.active.t2 { color: var(--cyan);  border-bottom-color: var(--cyan); }
+
+  .instr-table { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+  .instr-row { display: grid; grid-template-columns: 28px 34px 96px 46px 46px 46px 1fr; align-items: center; border-bottom: 1px solid var(--border); padding: 3px 0; transition: background 0.12s; }
+  .instr-row:hover     { background: var(--bg3); }
+  .instr-row.current   { background: rgba(255,179,0,0.1); border-left: 2px solid var(--amber); }
+  .instr-row.executed  { background: rgba(0,230,118,0.04); }
+  .instr-cell { padding: 2px 8px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .instr-cell.addr    { color: var(--muted); font-size: 10px; }
+  .instr-cell.arrow   { color: var(--amber); font-weight: 700; }
+  .instr-cell.op      { color: var(--green); font-weight: 700; letter-spacing: 0.05em; }
+  .instr-cell.reg     { color: var(--cyan); }
+  .instr-cell.imm     { color: var(--amber); }
+  .instr-cell.comment { color: var(--muted); font-size: 10px; font-style: italic; }
+
+  .instr-header { display: grid; grid-template-columns: 28px 34px 96px 46px 46px 46px 1fr; padding: 4px 0; border-bottom: 1px solid var(--border2); background: var(--bg3); position: sticky; top: 0; z-index: 2; }
+  .instr-header .instr-cell { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+
+  #console-out { flex: 1; overflow-y: auto; padding: 10px 14px; font-size: 12px; line-height: 1.7; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+  .con-line  { display: block; }
+  .con-fetch { color: var(--cyan); }
+  .con-decode{ color: var(--purple); }
+  .con-exec  { color: var(--green); }
+  .con-halt  { color: var(--red); }
+  .con-snap  { color: var(--blue); }
+  .con-muted { color: var(--muted); }
+
+  .trace-entry { padding: 7px 14px; border-bottom: 1px solid var(--border); transition: background 0.12s; }
+  .trace-entry:hover { background: var(--bg3); }
+  .trace-entry.new { animation: flash-in 0.5s ease; }
+  @keyframes flash-in { from{background:rgba(0,230,118,0.15)} to{background:transparent} }
+
+  .trace-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+  .trace-step { font-size: 10px; color: var(--muted); }
+  .trace-pc   { font-size: 10px; color: var(--amber); }
+  .trace-op   { font-size: 13px; font-weight: 700; color: var(--green); }
+  .trace-result { font-size: 11px; color: var(--text2); }
+
+  .trace-regs { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+  .trace-reg-pill { font-size: 10px; padding: 1px 6px; border-radius: 2px; background: var(--bg4); color: var(--text2); border: 1px solid var(--border); }
+  .trace-reg-pill.changed { background: rgba(0,230,118,0.08); border-color: rgba(0,230,118,0.3); color: var(--green); }
+
+  .empty-state { padding: 24px 14px; color: var(--muted); font-size: 11px; text-align: center; line-height: 2; }
+
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-left">
+    <div class="cpu-logo">
+      <span></span><span></span><span></span>
+      <span></span><span></span><span></span>
+      <span></span><span></span><span></span>
+    </div>
+    <div>
+      <div class="header-title">CPU Emulator</div>
+      <div class="header-sub">Custom ISA · Fetch → Decode → Execute · MASM + Irvine32</div>
+    </div>
+  </div>
+  <div class="status-bar">
+    <div class="status-pill" id="status-pill">IDLE</div>
+    <div class="status-pill" id="cycle-pill">0 cycles</div>
+    <div class="status-pill" id="pc-pill">PC: 0x00000000</div>
+  </div>
+</header>
+
+<div class="main-grid">
+
+  <!-- LEFT: Registers + Flags + Memory -->
+  <div class="panel">
+    <div class="panel-header"><span class="panel-dot"></span>Registers &amp; Flags</div>
+    <div class="panel-body">
+      <div id="reg-list"></div>
+      <div class="pc-row">
+        <span class="lbl">Program Counter</span>
+        <span class="val" id="disp-pc">0x00000000</span>
+      </div>
+      <div class="flags-row">
+        <div class="flag-pill zf" id="flag-z">Z=0</div>
+        <div class="flag-pill"   id="flag-n">N=0</div>
+        <div class="flag-pill cf" id="flag-c">C=0</div>
+      </div>
+      <div class="cycles-row">
+        <span>Cycles executed</span>
+        <span class="val" id="disp-cycles">0</span>
+      </div>
+      <div class="section-label">Memory snapshot (0x00–0x1F)</div>
+      <div class="mem-grid" id="mem-grid"></div>
+    </div>
+  </div>
+
+  <!-- CENTER: FDE + Controls + Program -->
+  <div class="center-panel">
+
+    <div class="fde-strip">
+      <div class="fde-box" id="fde-fetch">
+        <div class="fde-label">① Fetch</div>
+        <div class="fde-val" id="fde-fetch-val">—</div>
+        <div class="fde-sub" id="fde-fetch-sub">Waiting for run</div>
+      </div>
+      <div class="fde-arrow">▶</div>
+      <div class="fde-box decode" id="fde-decode">
+        <div class="fde-label">② Decode</div>
+        <div class="fde-val" id="fde-decode-val">—</div>
+        <div class="fde-sub" id="fde-decode-sub">Waiting</div>
+      </div>
+      <div class="fde-arrow">▶</div>
+      <div class="fde-box execute" id="fde-exec">
+        <div class="fde-label">③ Execute</div>
+        <div class="fde-val" id="fde-exec-val">—</div>
+        <div class="fde-sub" id="fde-exec-sub">Waiting</div>
+      </div>
+    </div>
+
+    <div class="controls-row">
+      <button class="btn primary" onclick="runAll()">▶ Run All</button>
+      <button class="btn" onclick="stepOne()">⏭ Step</button>
+      <button class="btn danger" onclick="resetCPU()">↺ Reset</button>
+      <div class="speed-row">
+        <span>Speed</span>
+        <input type="range" id="speed-ctrl" min="100" max="1200" value="500" step="100">
+        <span id="speed-label">500ms</span>
+      </div>
+    </div>
+
+    <div class="prog-content">
+      <div class="prog-tabs">
+        <div class="prog-tab active" id="tab-prog" onclick="showTab('prog')">Program Memory</div>
+        <div class="prog-tab t2" id="tab-console" onclick="showTab('console')">Console</div>
+      </div>
+
+      <div id="view-prog" class="prog-content">
+        <div class="instr-table">
+          <div class="instr-header">
+            <div class="instr-cell"></div>
+            <div class="instr-cell">Addr</div>
+            <div class="instr-cell">Opcode</div>
+            <div class="instr-cell">Dst</div>
+            <div class="instr-cell">Src</div>
+            <div class="instr-cell">Imm</div>
+            <div class="instr-cell">Comment</div>
+          </div>
+          <div id="instr-body"></div>
+        </div>
+      </div>
+
+      <div id="view-console" class="prog-content" style="display:none">
+        <div id="console-out"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Instruction Trace -->
+  <div class="panel">
+    <div class="panel-header"><span class="panel-dot purple"></span>Instruction Trace</div>
+    <div class="panel-body" id="trace-list">
+      <div class="empty-state">No trace yet.<br>Press ▶ Run or ⏭ Step.</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  CPU EMULATOR CORE  (mirrors ASM logic)
+// ═══════════════════════════════════════════
+
+const OP = {
+  MOV:0x00,ADD:0x01,SUB:0x02,AND:0x03,OR:0x04,
+  JMP:0x05,JZ:0x06,JN:0x07,CMP:0x08,HALT:0x09,
+  ROTBLEND:0x0A,SCRAMBLE:0x0B,BITFUSE:0x0C,
+  SNAPSHOT:0x0D,MOVIMM:0x0E
+};
+const OP_NAME = {
+  0x00:'MOV',0x01:'ADD',0x02:'SUB',0x03:'AND',0x04:'OR',
+  0x05:'JMP',0x06:'JZ',0x07:'JN',0x08:'CMP',0x09:'HALT',
+  0x0A:'ROTBLEND',0x0B:'SCRAMBLE',0x0C:'BITFUSE',
+  0x0D:'SNAPSHOT',0x0E:'MOV_IMM'
+};
+
+let cpu, memory, progMem, traceLog, prevRegs, snapshot, runTimer;
+
+function hex32(n){ return '0x'+(n>>>0).toString(16).toUpperCase().padStart(8,'0'); }
+function hex8(n) { return '0x'+(n&0xFF).toString(16).toUpperCase().padStart(2,'0'); }
+function u32(n)  { return n>>>0; }
+
+function updateFlags(v){ v=u32(v); cpu.flagZ=(v===0)?1:0; cpu.flagN=(v&0x80000000)?1:0; }
+
+function exec_ROTBLEND(dst,src,n){
+  let v=u32(cpu.regs[dst]); n=n&0x1F;
+  v=u32((v<<n)|(v>>>(32-n)));
+  v=u32(v^cpu.regs[src]);
+  cpu.regs[dst]=v; updateFlags(v); return v;
+}
+function exec_SCRAMBLE(dst,key){
+  let v=u32(cpu.regs[dst]);
+  const k=u32((key&0xFF)*0x01010101);
+  v=u32(v^k);
+  const hi=(v&0xF0F0F0F0)>>>4;
+  const lo=(v&0x0F0F0F0F)<<4;
+  v=u32(hi|lo);
+  v=u32((v>>>7)|(v<<25));
+  cpu.regs[dst]=v; updateFlags(v); return v;
+}
+function exec_BITFUSE(dst,ra,rb){
+  let a=cpu.regs[ra]&0xFFFF, b=cpu.regs[rb]&0xFFFF, r=0;
+  for(let i=0;i<16;i++){
+    r|=((a>>>i)&1)<<(2*i);
+    r|=((b>>>i)&1)<<(2*i+1);
+  }
+  r=u32(r); cpu.regs[dst]=r; updateFlags(r); return r;
+}
+function exec_SNAPSHOT(){
+  snapshot={regs:[...cpu.regs],pc:cpu.pc,flagZ:cpu.flagZ,flagN:cpu.flagN,flagC:cpu.flagC,cycle:cpu.cycles};
+  return 0;
+}
+
+function cpu_fetch(){
+  const idx=cpu.pc/4;
+  if(idx>=progMem.length) return {op:OP.HALT,dst:0,src:0,imm:0,comment:'; OOB'};
+  const instr=progMem[idx];
+  cpu.pc+=4;
+  return instr;
+}
+
+function cpu_execute(instr){
+  const {op,dst,src,imm}=instr;
+  let result=0;
+  switch(op){
+    case OP.MOVIMM: cpu.regs[dst]=imm; result=imm; updateFlags(imm); break;
+    case OP.MOV:    cpu.regs[dst]=cpu.regs[src]; result=cpu.regs[dst]; updateFlags(result); break;
+    case OP.ADD:
+      result=u32(cpu.regs[dst]+cpu.regs[src]);
+      cpu.flagC=(cpu.regs[dst]+cpu.regs[src])>0xFFFFFFFF?1:0;
+      cpu.regs[dst]=result; updateFlags(result); break;
+    case OP.SUB:
+      cpu.flagC=cpu.regs[dst]<cpu.regs[src]?1:0;
+      result=u32(cpu.regs[dst]-cpu.regs[src]);
+      cpu.regs[dst]=result; updateFlags(result); break;
+    case OP.AND:
+      result=u32(cpu.regs[dst]&cpu.regs[src]);
+      cpu.regs[dst]=result; updateFlags(result); break;
+    case OP.OR:
+      result=u32(cpu.regs[dst]|cpu.regs[src]);
+      cpu.regs[dst]=result; updateFlags(result); break;
+    case OP.CMP:
+      result=u32(cpu.regs[dst]-cpu.regs[src]);
+      updateFlags(result); break;
+    case OP.JMP: cpu.pc=imm*4; result=cpu.pc; break;
+    case OP.JZ:  if(cpu.flagZ){cpu.pc=imm*4;} result=cpu.pc; break;
+    case OP.JN:  if(cpu.flagN){cpu.pc=imm*4;} result=cpu.pc; break;
+    case OP.ROTBLEND: result=exec_ROTBLEND(dst,src,imm); break;
+    case OP.SCRAMBLE: result=exec_SCRAMBLE(dst,imm); break;
+    case OP.BITFUSE:  result=exec_BITFUSE(dst,src,imm); break;
+    case OP.SNAPSHOT: exec_SNAPSHOT(); result=0; break;
+    case OP.HALT: cpu.halted=true; result=0; break;
+  }
+  cpu.cycles++;
+  return result;
+}
+
+function loadDemoProgram(){
+  progMem=[
+    {op:OP.MOVIMM,  dst:0,src:0,imm:10,   comment:'; R0 = 10'},
+    {op:OP.MOVIMM,  dst:1,src:0,imm:25,   comment:'; R1 = 25'},
+    {op:OP.ADD,     dst:0,src:1,imm:0,    comment:'; R0 = R0 + R1 → 35'},
+    {op:OP.MOVIMM,  dst:2,src:0,imm:0x5A, comment:'; R2 = 0x5A (key)'},
+    {op:OP.ROTBLEND,dst:0,src:2,imm:3,    comment:'; R0 = ROL(R0,3) XOR R2'},
+    {op:OP.MOVIMM,  dst:3,src:0,imm:0xAB, comment:'; R3 = 0xAB'},
+    {op:OP.SCRAMBLE,dst:3,src:0,imm:0x1F, comment:'; R3 = SCRAMBLE(R3, 0x1F)'},
+    {op:OP.MOVIMM,  dst:4,src:0,imm:0xF0, comment:'; R4 = 0xF0'},
+    {op:OP.MOVIMM,  dst:5,src:0,imm:0x0F, comment:'; R5 = 0x0F'},
+    {op:OP.BITFUSE, dst:6,src:4,imm:5,    comment:'; R6 = BITFUSE(R4, R5)'},
+    {op:OP.SNAPSHOT,dst:0,src:0,imm:0,    comment:'; Save CPU state'},
+    {op:OP.MOVIMM,  dst:7,src:0,imm:1,    comment:'; R7 = 1'},
+    {op:OP.CMP,     dst:0,src:7,imm:0,    comment:'; CMP R0, R7 → set flags'},
+    {op:OP.SUB,     dst:0,src:1,imm:0,    comment:'; R0 = R0 - R1'},
+    {op:OP.HALT,    dst:0,src:0,imm:0,    comment:'; HALT'}
+  ];
+}
+
+function resetCPU(){
+  stopRun();
+  cpu={regs:new Array(8).fill(0),pc:0,flagZ:0,flagN:0,flagC:0,halted:false,cycles:0};
+  memory=new Uint8Array(256);
+  traceLog=[]; prevRegs=new Array(8).fill(0); snapshot=null;
+  loadDemoProgram();
+  consoleLog('CPU reset. Demo program loaded (15 instructions).','con-muted');
+  renderAll();
+  updateFDE('—','Waiting','—','Waiting','—','Waiting');
+  setFDEActive('none');
+  setStatus('IDLE',false);
+}
+
+function stepOne(){
+  if(cpu.halted){consoleLog('[HALTED] Reset to run again.','con-halt');return;}
+  prevRegs=[...cpu.regs];
+  const pcBefore=cpu.pc;
+
+  setFDEActive('fetch');
+  const instr=cpu_fetch();
+  
+  document.getElementById('fde-fetch-val').textContent=hex32(pcBefore);
+  document.getElementById('fde-fetch-sub').textContent='→ '+( OP_NAME[instr.op]||'?');
+  document.getElementById('fde-decode-val').textContent='...';
+  document.getElementById('fde-decode-sub').textContent='Decoding...';
+  document.getElementById('fde-exec-val').textContent='...';
+  document.getElementById('fde-exec-sub').textContent='...';
+
+  consoleLog(`FETCH PC=${hex32(pcBefore)} instr=${OP_NAME[instr.op]}`,'con-fetch');
+
+  setTimeout(()=>{
+    setFDEActive('decode');
+    const ds=instr.dst!==undefined?`R${instr.dst}`:'—';
+    const ss=instr.src!==undefined?`R${instr.src}`:'—';
+    const is=hex8(instr.imm);
+    document.getElementById('fde-decode-val').textContent=OP_NAME[instr.op]||'?';
+    document.getElementById('fde-decode-sub').textContent=`${ds}, ${ss}, ${is}`;
+    consoleLog(`DECODE op=${OP_NAME[instr.op]} dst=R${instr.dst} src=R${instr.src} imm=${is}`,'con-decode');
+  },150);
+
+  setTimeout(()=>{
+    setFDEActive('execute');
+    const result=cpu_execute(instr);
+    const rs=hex32(result);
+
+    consoleLog(`EXEC result=${rs} Z=${cpu.flagZ} N=${cpu.flagN} C=${cpu.flagC}`,'con-exec');
+
+    document.getElementById('fde-exec-val').textContent=OP_NAME[instr.op]||'?';
+    document.getElementById('fde-exec-sub').textContent='→ '+rs;
+
+    traceLog.push({step:cpu.cycles,pc:pcBefore,op:OP_NAME[instr.op],dst:instr.dst,src:instr.src,imm:instr.imm,result,regs:[...cpu.regs],flagZ:cpu.flagZ,flagN:cpu.flagN,flagC:cpu.flagC});
+    if(traceLog.length>64) traceLog.shift();
+
+    renderAll();
+    if(cpu.halted){setStatus('HALTED',false);stopRun();}
+  },300);
+}
+
+function runAll(){
+  if(cpu.halted) resetCPU();
+  setStatus('RUNNING',true);
+  scheduleStep();
+}
+function scheduleStep(){
+  if(cpu.halted){setStatus('HALTED',false);return;}
+  const delay=parseInt(document.getElementById('speed-ctrl').value);
+  runTimer=setTimeout(()=>{
+    stepOne();
+    setTimeout(()=>{ if(!cpu.halted) scheduleStep(); },380);
+  },delay);
+}
+function stopRun(){ if(runTimer){clearTimeout(runTimer);runTimer=null;} }
+
+function renderAll(){ renderRegs(); renderFlags(); renderPC(); renderProgram(); renderTrace(); renderMemory(); }
+
+function renderRegs(){
+  const el=document.getElementById('reg-list');
+  const max=Math.max(...cpu.regs,1);
+  el.innerHTML=cpu.regs.map((v,i)=>{
+    const changed=v!==prevRegs[i];
+    const pct=Math.round((v/max)*100);
+    return `<div class="reg-row ${changed?'changed':''}">
+      <span class="reg-name">R${i}</span>
+      <div class="reg-bar-wrap"><div class="reg-bar" style="width:${pct}%"></div></div>
+      <span class="reg-val">${hex32(v)}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('disp-cycles').textContent=cpu.cycles;
+  document.getElementById('cycle-pill').textContent=`${cpu.cycles} cycles`;
+}
+
+function renderFlags(){
+  const fz=document.getElementById('flag-z');
+  const fn=document.getElementById('flag-n');
+  const fc=document.getElementById('flag-c');
+  fz.textContent=`Z=${cpu.flagZ}`; fn.textContent=`N=${cpu.flagN}`; fc.textContent=`C=${cpu.flagC}`;
+  fz.className='flag-pill zf'+(cpu.flagZ?' active':'');
+  fn.className='flag-pill'+(cpu.flagN?' active':'');
+  fc.className='flag-pill cf'+(cpu.flagC?' active':'');
+}
+
+function renderPC(){
+  const h=hex32(cpu.pc);
+  document.getElementById('disp-pc').textContent=h;
+  document.getElementById('pc-pill').textContent=`PC: ${h}`;
+}
+
+function renderProgram(){
+  const cur=cpu.pc/4;
+  document.getElementById('instr-body').innerHTML=progMem.map((p,i)=>{
+    const isCur=i===cur&&!cpu.halted;
+    const isExe=i<cur||cpu.halted;
+    const dstS=(p.op===OP.HALT||p.op===OP.SNAPSHOT)?'—':`R${p.dst}`;
+    const srcS=(p.op===OP.MOVIMM||p.op===OP.SCRAMBLE||p.op===OP.SNAPSHOT||p.op===OP.HALT||p.op===OP.JMP||p.op===OP.JZ||p.op===OP.JN)?'—':`R${p.src}`;
+    const immS=(p.op===OP.MOVIMM||p.op===OP.ROTBLEND||p.op===OP.SCRAMBLE||p.op===OP.JMP||p.op===OP.JZ||p.op===OP.JN)?hex8(p.imm):'—';
+    return `<div class="instr-row ${isCur?'current':isExe?'executed':''}">
+      <div class="instr-cell arrow">${isCur?'▶':''}</div>
+      <div class="instr-cell addr">${hex8(i*4)}</div>
+      <div class="instr-cell op">${OP_NAME[p.op]||'?'}</div>
+      <div class="instr-cell reg">${dstS}</div>
+      <div class="instr-cell reg">${srcS}</div>
+      <div class="instr-cell imm">${immS}</div>
+      <div class="instr-cell comment">${p.comment}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderTrace(){
+  if(!traceLog.length) return;
+  const el=document.getElementById('trace-list');
+  el.innerHTML=[...traceLog].reverse().map((t,idx)=>{
+    const prev=traceLog.length-1-idx>0?traceLog[traceLog.length-2-idx].regs:new Array(8).fill(0);
+    const pills=t.regs.map((v,r)=>{
+      const ch=v!==(prev[r]||0);
+      return `<span class="trace-reg-pill ${ch?'changed':''}">R${r}=${hex32(v)}</span>`;
+    }).join('');
+    return `<div class="trace-entry ${idx===0?'new':''}">
+      <div class="trace-top"><span class="trace-step">#${t.step}</span><span class="trace-pc">${hex32(t.pc)}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span class="trace-op">${t.op}</span>
+        <span class="trace-result">→ ${hex32(t.result)}</span>
+      </div>
+      <div class="trace-regs">${pills}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderMemory(){
+  document.getElementById('mem-grid').innerHTML=Array.from(memory.slice(0,32)).map(v=>
+    `<div class="mem-cell ${v?'nonzero':''}">${v.toString(16).toUpperCase().padStart(2,'0')}</div>`
+  ).join('');
+}
+
+function updateFDE(fV,fS,dV,dS,eV,eS){
+  document.getElementById('fde-fetch-val').textContent=fV;
+  document.getElementById('fde-fetch-sub').textContent=fS;
+  document.getElementById('fde-decode-val').textContent=dV;
+  document.getElementById('fde-decode-sub').textContent=dS;
+  document.getElementById('fde-exec-val').textContent=eV;
+  document.getElementById('fde-exec-sub').textContent=eS;
+}
+function setFDEActive(s){
+  document.getElementById('fde-fetch').classList.toggle('active',s==='fetch');
+  document.getElementById('fde-decode').classList.toggle('active',s==='decode');
+  document.getElementById('fde-exec').classList.toggle('active',s==='execute');
+}
+function setStatus(label,running){
+  const el=document.getElementById('status-pill');
+  el.textContent=label;
+  el.className='status-pill'+(label==='HALTED'?' halted':running?' running':'');
+}
+function consoleLog(msg,cls){
+  const el=document.getElementById('console-out');
+  const s=document.createElement('span');
+  s.className='con-line '+(cls||'');
+  s.textContent='> '+msg;
+  el.appendChild(s);
+  el.appendChild(document.createElement('br'));
+  el.scrollTop=el.scrollHeight;
+}
+function showTab(t){
+  document.getElementById('view-prog').style.display=t==='prog'?'':'none';
+  document.getElementById('view-console').style.display=t==='console'?'':'none';
+  document.getElementById('tab-prog').className='prog-tab'+(t==='prog'?' active':'');
+  document.getElementById('tab-console').className='prog-tab t2'+(t==='console'?' active':'');
+}
+
+document.getElementById('speed-ctrl').addEventListener('input',function(){
+  document.getElementById('speed-label').textContent=this.value+'ms';
+});
+
+resetCPU();
+</script>
+</body>
+</html>

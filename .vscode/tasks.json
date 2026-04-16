@@ -1,0 +1,19 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "MASM: Build and Run",
+            "type": "shell",
+            "command": ".\\build_and_run.bat",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
+        }
+    ]
+}
