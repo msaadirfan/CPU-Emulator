@@ -9,7 +9,7 @@
 |---|---|---|
 | Muhammad Saad Irfan | Registers, Memory, ALU, Arithmetic/Data Instructions | `cpu_regs`, `emul_memory`, `UpdateFlags`, MOV/ADD/SUB/AND/OR |
 | Tayyab Mumtaz | Control Flow, Branching, Tracing, I/O, Testing | JMP/JZ/JN, `Trace_Record`, `Display_Trace`, console I/O |
-| Muhammad Shaheer Mustafa | Assembler Design, Instruction Parsing, GUI | `CPU_Fetch`/decode dispatch, `gui/index.html` |
+| Muhammad Shaheer Mustafa | Assembler Design, Instruction Parsing, GUI | `CPU_Fetch`/decode dispatch |
 | Maheen Munir | ISA Documentation, Test Programs | `test_program.asm`, opcode table, instruction comments |
 
 ---
